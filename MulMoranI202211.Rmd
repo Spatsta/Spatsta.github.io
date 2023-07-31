@@ -1,0 +1,459 @@
+---
+title: "莫兰矩阵"
+subtitle: "202211多维的莫兰指数(基于不同观测)"
+author: "张策"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: pygments
+    code_download: true
+    #code_folding: hide
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE, 
+                      message = FALSE
+                      )
+# library(tidyverse)
+library(ggplot2)
+library(openxlsx)
+library(spdep)
+# library(pheatmap)
+library(MASS)
+library(grid)
+library(gridExtra)
+library(rgdal)
+library(sf)
+library(dplyr)
+
+#权重矩阵归一化
+WToOne=function(W){
+  W=W/sum(colSums(W))
+  return(W)
+}
+
+#权重矩阵列标准化
+WColNormalization=function(W){
+  col=colSums(W)
+  for (i in 1:nrow(W)) {
+    for (j in 1:ncol(W)) {
+      W[j,i]=W[j,i]/col[i]
+    }
+  }
+  return(W)
+}
+
+#数据矩阵标准化
+DataColNormalization=function(data){
+  means=colMeans(data)
+  stds=numeric(ncol(data))
+  for (i in 1:ncol(data)) {
+    sum=0
+    for (j in 1:nrow(data)) {
+      sum=sum+(data[j,i]-means[i])^2
+    }
+    stds[i]=sqrt(sum/nrow(data))
+    data[,i]=(data[,i]-means[i])/stds[i]
+  }
+  return(data)
+}
+
+#改进莫兰的矩阵计算
+Matrix_cal_I=function(data,W,n){
+  xs=n/(nrow(data))#计算系数
+  # xs=xs/w0(1或n) #取决于权重矩阵采用的方式
+  return(xs*(t(data)%*%W%*%data))
+}
+
+#改进莫兰的直接计算
+Direct_cal_I=function(data,w,S){
+  means=colMeans(data)#每列均值
+  s2=numeric(ncol(data))#每列的方差
+  I=matrix(0,ncol(data),ncol(data))#Moran指数矩阵
+  w0=sum(colSums(w))#w0
+  Q=nrow(w)#空间单元个数
+  N=sum(S)
+  #计算每列的方差
+  for (i in 1:ncol(data)) {
+    SUM=0
+    for (j in 1:nrow(data)) {
+      SUM=SUM+(data[j,i]-means[i])*(data[j,i]-means[i])
+    }
+    s2[i]=SUM
+  }
+  #分别计算分子与分母
+  for(i in 1:ncol(data)){
+    for (j in 1:ncol(data)) {
+      fz=0
+      fm=0
+      starti=1
+      endi=S[1]
+      for (m in 1:Q) {#第i个空间单元
+        if(m>1){#第i个空间单元开始的下标
+          starti=sum(S[1:(m-1)])+1
+          endi=sum(S[1:m])
+        }
+        startj=1
+        endj=S[1]
+        for (n in 1:Q) {#第j个空间单元
+          if(n>1){#第j个空间单元开始的下标
+            startj=sum(S[1:(n-1)])+1
+            endj=sum(S[1:n])
+          }
+          temp=0
+          for (k in starti:endi) {
+            for (l in startj:endj) {
+              temp=temp+(data[k,i]-means[i])*(data[l,j]-means[j])
+            }
+          }
+          fz=fz+w[m,n]*temp
+        }
+      }
+      fz=Q*fz
+      fm=sqrt(s2[i])*sqrt(s2[j])#此处没有乘以w0(因为w0=1)
+      I[i,j]=fz/fm
+    }
+  }
+  return(I)
+}
+
+#全局莫兰的随机置换检验
+global_RanPerTest=function(data,W,M,n){
+  xs=n/(nrow(data))
+  a=matrix(0,ncol(data),ncol(data))#存储检验p值
+  result=matrix(0,ncol(data),ncol(data))#存储检验结果
+  I=numeric(M+1)#存储莫兰的排列
+  II=matrix(0,M+1,ncol(data)*ncol(data))
+  #生成随机排列
+  # c1=as.vector(sample(1:21, replace=FALSE))
+  for (i in 1:ncol(data)) {
+    for (j in 1:ncol(data)) {
+      m=1
+      I[m]=xs*t(data[,i])%*%W%*%data[,j]
+      left=numeric(nrow(data))
+      right=numeric(nrow(data))
+      while (m<(M+1)) {
+        m=m+1
+        p=as.vector(sample(1:nrow(data), replace=FALSE))
+        #重排的data[,i],data[,j]
+        for (k in 1:nrow(data)) {
+          left[k]=data[p[k],i]
+          right[k]=data[p[k],j]
+        }
+        I[m]=xs*left%*%W%*%right#R语言机制的原因，left、right不是矩阵不需要转置
+      }
+      #计算I[1]的rank
+      rank=M+1
+      for (r in 2:(M+1)) {
+        if(I[1]>I[r]){
+          rank=rank-1
+        }
+      }
+      II[,(i-1)*ncol(data)+j]=I
+      a[i,j]=rank/(M+1)
+      if(a[i,j]<0.05|a[i,j]==0.05){
+        result[i,j]=1
+      }else if(a[i,j]>0.95|a[i,j]==0.95){
+        result[i,j]=-1
+      }
+    }
+  }
+  # print("moran's:")
+  # print(II)
+  print("随机置换检验的p值为:")
+  print(a)
+  print("随机置换检验的bool值为(其中1表示高高、低低聚集，-1表示高低聚集，0表示不显著):")
+  return(result)
+}
+
+
+```
+
+# 2022.11基于空间单元有多个观测的Moran指数矩阵(利用Queen邻接的权阵)
+```{r}
+##数据读取
+air_202211 <- read.xlsx("./data/空气质量数据/202211.xlsx")
+data_202211=as.matrix(air_202211[,3:6],nrow=459,ncol=4)
+# nrow(data_202211)
+#展示原数据的热力图
+# pheatmap(as.data.frame(data_202211),show_rownames = TRUE,show_colnames = TRUE,fontsize = 2,color = colorRampPalette(c('#0000ff','#ffffff','#ff0000'))(50),annotation_legend = TRUE,scale = "column",cluster_rows = FALSE,cluster_cols = FALSE)
+
+##权重矩阵
+W=read.xlsx("./data/空间权重矩阵/W_contiguityQueen.xlsx")
+W_con=as.matrix(W[1:21,2:22],nrow=21,ncol=21)
+options(digits = 6)
+
+#先归一化再构造拓展空间权重矩阵
+W_toOne=WToOne(W_con)
+
+##**********************构造拓展空间权重矩阵***************************
+L=c(17,23,28,22,12,14,30,23,4,18,30,26,28,17,24,21,26,25,30,11,30)#每个空间单元的观测数
+M_con=matrix(,nrow = 0,ncol = 459)#创建459列的空矩阵，注意空矩阵、零矩阵、NA矩阵
+for (i in 1:length(L)) {
+  A=matrix(,nrow = L[i],ncol = 0)#分块矩阵第一行
+  for (j in 1:length(L)) {
+    temp=W_toOne[i,j]*matrix(1,L[i],L[j])
+    A=cbind(A,temp)
+  }
+  M_con=rbind(M_con,A)#合并分块矩阵的每一行
+}
+# dim(M_con)
+
+# write.xlsx(as.data.frame(M_con), file = "扩展空间权阵.xlsx", row.names = FALSE, sheetName = "Sheet1")
+#计算，(***********注意权重矩阵采用的变换方式***********)
+MoranMatrix_Mat=Matrix_cal_I(DataColNormalization(data_202211),M_con,21)
+MoranMatrix_Dir=Direct_cal_I(data_202211,W_toOne,L)
+
+# print("'基于直接计算时'，空间单元有多个观测时的Moran指数矩阵:")
+# MoranMatrix_Dir
+print("'基于矩阵计算时'，空间单元有多个观测时的Moran指数矩阵:")
+MoranMatrix_Mat
+
+result=global_RanPerTest(DataColNormalization(data_202211),M_con,500,21)
+result
+
+```
+
+# 全局Moran指数矩阵元素的分布模拟(研究区域为矩形区域)
+```{r}
+gc()
+memory.limit() 
+memory.limit(size = 600000)
+
+#利用标准正态分布生成四维的模拟数据，研究区域为5*5的空间单元
+DIM=4
+n=50#*******还需要验证不同空间单元的情况！！！
+k=5000#循环次数
+LEN=n*n
+#生成空间单元观测数
+set.seed(88)
+S=sample(5:12,LEN,replace = TRUE)
+SUM=sum(S)
+
+MulData=matrix(0,SUM,DIM)#存储随机生成的资料矩阵
+I_mulmoran=matrix(0,k,DIM*DIM)#存储k次循环后的k个Moran指数矩阵
+
+#生成空间权重矩阵(基于矩形区域)
+w_queen=matrix(0,LEN,LEN)
+for (i in 1:nrow(w_queen)) {
+  for (j in i:ncol(w_queen)) {
+    if(j==i+1|j==i+n|j==i+(n+1)){
+      w_queen[i,j]=1
+      w_queen[j,i]=1
+    }
+  }
+}
+#空间权重矩阵归一化
+W_toOne=WToOne(w_queen)
+
+#构造拓展空间权重矩阵
+M_con=matrix(,nrow = 0,ncol = SUM)#创建SUM列的空矩阵，注意空矩阵、零矩阵、NA矩阵
+
+for (i in 1:LEN) {
+  A=matrix(,nrow = S[i],ncol = 0)#分块矩阵第一行
+  for (j in 1:LEN) {
+    temp=W_toOne[i,j]*matrix(1,S[i],S[j])
+    A=cbind(A,temp)
+  }
+  M_con=rbind(M_con,A)#合并分块矩阵的每一行
+}
+dim(M_con)
+
+#计算1000、10000次莫兰矩阵
+for (i in 1:k) {
+  # mean<-c(106.99,37.88,21.17,8.52)  #指定均值向量、协方差阵
+  # sigma<-matrix(c(1161.48,311.08,166.23,-2.26,311.08,287.73,159.35,1.84,166.23,159.35,116.07 ,-2.42,-2.26,1.84,-2.42,9.75),nrow = 4,ncol = 4)
+  # MulData<-mvrnorm(SUM,mean,sigma)  #生成数据
+  MulData[,1]=rnorm(SUM,106.99,1161.48)
+  MulData[,2]=rnorm(SUM,37.88,287.73)
+  MulData[,3]=rnorm(SUM,21.17,116.07)
+  MulData[,4]=rnorm(SUM,8.52,9.75)
+  Mul_MoranI=Matrix_cal_I(DataColNormalization(MulData),M_con,LEN)
+  temp=c(Mul_MoranI[1,],Mul_MoranI[2,],Mul_MoranI[3,],Mul_MoranI[4,])#将矩阵拼接为一个长向量
+  I_mulmoran[i,]=temp
+}
+dim(I_mulmoran)
+colMeans(I_mulmoran)
+#****************************频率分布图及检验****************************
+pic=list()
+for (j in 1:(DIM*DIM)) {
+  pic[[j]]=ggplot(data.frame(Index=I_mulmoran[,j]),aes(Index,..density..)) +
+    geom_histogram(color='white',fill='gray60',binwidth = 0.004) +
+    geom_line(stat = 'density',size=1.5,linetype=2)+
+    labs(x = "MoranI_ij", y = "Frequency") +
+    theme_bw()
+  print(shapiro.test(I_mulmoran[,j]))#SW检验，p值大于0.05说明是正态
+}
+grid.arrange(pic[[1]],pic[[2]],pic[[3]],pic[[4]],pic[[5]],pic[[6]],pic[[7]],pic[[8]],pic[[9]],pic[[10]],pic[[11]],pic[[12]],pic[[13]],pic[[14]],pic[[15]],pic[[16]])
+
+pdf(file = "N2500.pdf",width =12,height = 9)
+grid.arrange(pic[[1]],pic[[2]],pic[[3]],pic[[4]],pic[[5]],pic[[6]],pic[[7]],pic[[8]],pic[[9]],pic[[10]],pic[[11]],pic[[12]],pic[[13]],pic[[14]],pic[[15]],pic[[16]])
+dev.off()
+
+setEPS()
+postscript("N2500.eps", width = 12, height = 9)
+grid.arrange(pic[[1]],pic[[2]],pic[[3]],pic[[4]],pic[[5]],pic[[6]],pic[[7]],pic[[8]],pic[[9]],pic[[10]],pic[[11]],pic[[12]],pic[[13]],pic[[14]],pic[[15]],pic[[16]])
+dev.off()
+
+```
+# 单变量与多变量空间数据分布图
+```{r}
+
+pic=list()#用于存储6种空气污染物图片
+
+#****************联结地图数据与空气污染时间*******************************
+Sichuan_map <- readOGR("./data/四川省地图/SC.shp",use_iconv = TRUE, encoding = "UTF-8")
+Sc_map <- fortify(Sichuan_map)#加固数据，使得shp数据变为标准的df数据(用于画图)
+map0<-Sichuan_map@data#保存原始map数据
+Sichuan_map_id<-data.frame(map0,id=c(0:20))#过渡用数据框
+# class(Sichuan$id)
+Sc_map$id <- as.numeric(Sc_map$id)
+SC_map_id<-full_join(Sc_map,Sichuan_map_id)#至此得到了完整的完整的“china_map数据框”
+#读取热度数据
+data0 <- read.xlsx("./data/空气质量数据/202211oneAQI.xlsx")
+SC_data <- full_join(SC_map_id,data0,by="id")#最终合并
+#****************创建经纬度*******************************
+#创建地级市的经纬度
+data0$long=c(102.5,107.03,104.00,107.50,104.40,
+             100.07,106.63,105.84,103.57,102.27,
+             105.69,103.83,104.73,106.25,105.06,
+             101.72,105.57,102.70,104.64,105.25,
+             104.78)
+
+data0$lat=c(32.5,31.96,30.67,31.22,31.13,
+            30.65,30.46,32.17,29.15,27.89,
+            28.38,30.05,31.98,31.18,29.71,
+            26.88,30.58,29.99,28.56,30.12,
+            29.32)
+
+
+
+#****************原始数据的分布图(单个)*******************************
+
+# pic[[1]]=ggplot()+geom_polygon(aes(x=long,y=lat,group=group,fill=O3),data=SC_data,colour="grey40")+
+#   #按GDP的值作为背景色
+#   scale_fill_gradient(low="white",high="red")+
+#   coord_map("polyconic")+
+#   geom_text(aes(x=long,y=lat-0.1,label=paste0(data0$地点)),data=data0,size=3)
+# pic[[2]]=ggplot()+geom_polygon(aes(x=long,y=lat,group=group,fill=PM10),data=SC_data,colour="grey40")+
+#   #按GDP的值作为背景色
+#   scale_fill_gradient(low="white",high="red")+
+#   coord_map("polyconic")+
+#   geom_text(aes(x=long,y=lat-0.1,label=paste0(data0$地点)),data=data0,size=3)
+# pic[[3]]=ggplot()+geom_polygon(aes(x=long,y=lat,group=group,fill=PM2.5),data=SC_data,colour="grey40")+
+#   #按GDP的值作为背景色
+#   scale_fill_gradient(low="white",high="red")+
+#   coord_map("polyconic")+
+#   geom_text(aes(x=long,y=lat-0.1,label=paste0(data0$地点)),data=data0,size=3)
+# pic[[4]]=ggplot()+geom_polygon(aes(x=long,y=lat,group=group,fill=SO2),data=SC_data,colour="grey40")+
+#   #按GDP的值作为背景色
+#   scale_fill_gradient(low="white",high="red")+
+#   coord_map("polyconic")+
+#   geom_text(aes(x=long,y=lat-0.1,label=paste0(data0$地点)),data=data0,size=3)
+# 
+# grid.arrange(pic[[1]],pic[[2]],pic[[3]],pic[[4]])
+# # 
+# pdf(file = "distribution.pdf",width =12,height = 9)
+# grid.arrange(pic[[1]],pic[[2]],pic[[3]],pic[[4]])
+# dev.off()
+# 
+# setEPS()
+# postscript("distribution.eps", width = 12, height = 9)
+# grid.arrange(pic[[1]],pic[[2]],pic[[3]],pic[[4]])
+# dev.off()
+
+#****************原始数据的分布图(综合)*******************************
+
+#画图
+pmax=ggplot()+geom_polygon(aes(x=long,y=lat,group=group,fill=AQI),data=SC_data,colour="grey40")+
+  #按GDP的值作为背景色
+  scale_fill_gradient(low="white",high="red")+
+  coord_map("polyconic")+
+  geom_text(aes(x=long,y=lat-0.1,label=paste0(data0$地点)),data=data0,size=4)+
+  geom_errorbar(data=data0,aes(x=long-0.3,ymin=lat,ymax=lat+0.4*O3/max(O3,PM10,PM2.5,SO2,NO2,CO)*3),size=1.5,color="#0000FF",width=0,alpha=0.8)+ #臭氧柱形图
+  geom_errorbar(data=data0,aes(x=long-0.2,ymin=lat,ymax=lat+0.4*PM10/max(O3,PM10,PM2.5,SO2,NO2,CO)*3),size=1.5,color="#00FF00",width=0,alpha=0.8)+ #PM10柱形图
+  geom_errorbar(data=data0,aes(x=long-0.1,ymin=lat,ymax=lat+0.4*PM2.5/max(O3,PM10,PM2.5,SO2,NO2,CO)*3),size=1.5,color="orange",width=0,alpha=0.8)+ #PM2.5柱形图
+  geom_errorbar(data=data0,aes(x=long,ymin=lat,ymax=lat+0.4*SO2/max(O3,PM10,PM2.5,SO2,NO2,CO)*3),size=1.5,color="#800080",width=0,alpha=0.8)+
+  # geom_errorbar(data=data0,aes(x=long+0.2,ymin=lat,ymax=lat+0.4*CO/max(O3,PM10,PM2.5,SO2,NO2,CO)*3),size=1.5,color="#FFA500",width=0,alpha=0.8)+
+  annotate("text", x=100, y=34, label="O3", color= "#0000FF", size=4)+ 
+  annotate("text", x=102, y=34, label="PM10", color= "#00FF00", size=4) +
+  annotate("text", x=104, y=34, label="PM2.5", color= "orange", size=4)+
+  annotate("text", x=106, y=34, label="SO2", color= "#800080", size=4)
+
+plot(pmax)
+
+pdf(file = "distributions.pdf",width =12,height = 9)
+plot(pmax)
+dev.off()
+
+setEPS()
+postscript("distributions.eps", width = 12, height = 9)
+plot(pmax)
+dev.off()
+
+```
+
+# ```{r}
+# library(foreign)
+# library(data.table)
+# # 数据读取
+# data <- read.xport("./data/LLCP2021.XPT")
+# # 数据转换
+# data_csv <- as.data.table(data)
+# data_xlsx <- as.data.frame(data)
+# # 将 data.table 保存为 .csv 文件
+# fwrite(data_csv, "LLCP2021.csv")
+# # 将 data.frame 保存为 .xlsx 文件
+# write.xlsx(data_xlsx, file = "LLCP2021.xlsx", row.names = FALSE, sheetName = "Sheet1")
+# ```
+
+
+
+# 2022.11基于空间单元只有一个观测的Moran指数矩阵(利用Queen邻接的权阵)
+```{r}
+##数据读取
+air_202211 <- read.xlsx("./data/空气质量数据/2022.11.xlsx")
+data_202211=as.matrix(air_202211[,7:12],nrow=630,ncol=6)
+
+##**********************数据简化(取平均数)***************************
+data202211=matrix(0,21,6)
+d=30
+for (i in 1:21) {
+  data202211[i,]=colSums(data_202211[((i-1)*d+1):(i*30),])
+  data202211[i,]=data202211[i,]/d
+}
+# dim(data202211)
+
+# write.xlsx(as.data.frame(data202211), file = "202211one.xlsx", row.names = FALSE, sheetName = "Sheet1")
+
+
+#展示原数据的热力图
+pheatmap(as.data.frame(data202211),show_rownames = TRUE,show_colnames = TRUE,fontsize = 2,color = colorRampPalette(c('#0000ff','#ffffff','#ff0000'))(50),annotation_legend = TRUE,scale = "column",cluster_rows = FALSE,cluster_cols = FALSE)
+
+##权重矩阵
+W=read.xlsx("./data/空间权重矩阵/W_contiguityQueen.xlsx")
+W_con=as.matrix(W[1:21,2:22],nrow=21,ncol=21)
+options(digits = 3)
+Cov=cor(data202211)
+
+print("空间单元只有一个观测时的Moran指数矩阵:")
+MoranMatrix_1=Tradional_I(DataColNormalization(data202211),WToOne(W_con))
+MoranMatrix_1
+
+#展示Moran指数矩阵的热力图
+pheatmap(as.data.frame(MoranMatrix_1),show_rownames = TRUE,show_colnames = TRUE,fontsize = 2,color = colorRampPalette(c('#0000ff','#ffffff','#ff0000'))(50),annotation_legend = TRUE,scale = "column",cluster_rows = FALSE,cluster_cols = FALSE)
+
+#随机置换检验
+result2=global_RanPerTest(DataColNormalization(data202211),WToOne(W_con),500)
+result2
+
+#展示显著性的热力图
+pheatmap(as.data.frame(result2),show_rownames = TRUE,show_colnames = TRUE,fontsize = 2,color = colorRampPalette(c('#0000ff','#ffffff','#ff0000'))(50),annotation_legend = TRUE,scale = "column",cluster_rows = FALSE,cluster_cols = FALSE)
+
+
+```
