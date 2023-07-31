@@ -177,14 +177,14 @@ global_RanPerTest=function(data,W,M,n){
 # 2022.11基于空间单元有多个观测的Moran指数矩阵(利用Queen邻接的权阵)
 ```{r}
 ##数据读取
-air_202211 <- read.xlsx("./data/空气质量数据/202211.xlsx")
+air_202211 <- read.xlsx("./202211.xlsx")
 data_202211=as.matrix(air_202211[,3:6],nrow=459,ncol=4)
 # nrow(data_202211)
 #展示原数据的热力图
 # pheatmap(as.data.frame(data_202211),show_rownames = TRUE,show_colnames = TRUE,fontsize = 2,color = colorRampPalette(c('#0000ff','#ffffff','#ff0000'))(50),annotation_legend = TRUE,scale = "column",cluster_rows = FALSE,cluster_cols = FALSE)
 
 ##权重矩阵
-W=read.xlsx("./data/空间权重矩阵/W_contiguityQueen.xlsx")
+W=read.xlsx("./W_contiguityQueen.xlsx")
 W_con=as.matrix(W[1:21,2:22],nrow=21,ncol=21)
 options(digits = 6)
 
@@ -307,7 +307,7 @@ dev.off()
 pic=list()#用于存储6种空气污染物图片
 
 #****************联结地图数据与空气污染时间*******************************
-Sichuan_map <- readOGR("./data/四川省地图/SC.shp",use_iconv = TRUE, encoding = "UTF-8")
+Sichuan_map <- readOGR("./SC.shp",use_iconv = TRUE, encoding = "UTF-8")
 Sc_map <- fortify(Sichuan_map)#加固数据，使得shp数据变为标准的df数据(用于画图)
 map0<-Sichuan_map@data#保存原始map数据
 Sichuan_map_id<-data.frame(map0,id=c(0:20))#过渡用数据框
@@ -315,7 +315,7 @@ Sichuan_map_id<-data.frame(map0,id=c(0:20))#过渡用数据框
 Sc_map$id <- as.numeric(Sc_map$id)
 SC_map_id<-full_join(Sc_map,Sichuan_map_id)#至此得到了完整的完整的“china_map数据框”
 #读取热度数据
-data0 <- read.xlsx("./data/空气质量数据/202211oneAQI.xlsx")
+data0 <- read.xlsx("./202211oneAQI.xlsx")
 SC_data <- full_join(SC_map_id,data0,by="id")#最终合并
 #****************创建经纬度*******************************
 #创建地级市的经纬度
@@ -398,26 +398,12 @@ dev.off()
 
 ```
 
-# ```{r}
-# library(foreign)
-# library(data.table)
-# # 数据读取
-# data <- read.xport("./data/LLCP2021.XPT")
-# # 数据转换
-# data_csv <- as.data.table(data)
-# data_xlsx <- as.data.frame(data)
-# # 将 data.table 保存为 .csv 文件
-# fwrite(data_csv, "LLCP2021.csv")
-# # 将 data.frame 保存为 .xlsx 文件
-# write.xlsx(data_xlsx, file = "LLCP2021.xlsx", row.names = FALSE, sheetName = "Sheet1")
-# ```
-
 
 
 # 2022.11基于空间单元只有一个观测的Moran指数矩阵(利用Queen邻接的权阵)
 ```{r}
 ##数据读取
-air_202211 <- read.xlsx("./data/空气质量数据/2022.11.xlsx")
+air_202211 <- read.xlsx("./2022.11.xlsx")
 data_202211=as.matrix(air_202211[,7:12],nrow=630,ncol=6)
 
 ##**********************数据简化(取平均数)***************************
